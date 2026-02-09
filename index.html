@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gamego 8-Bity Emulator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="emulator">
+    <header class="emulator__header">
+      <div>
+        <h1>Gamego 8-Bity</h1>
+        <p>8-bit emulator with BIOS boot, VGA-style font, and NES-like square wave audio.</p>
+      </div>
+      <div class="status">
+        <div><span class="label">Power</span> <span id="powerState">Off</span></div>
+        <div><span class="label">CPU</span> <span id="cpuState">Idle</span></div>
+        <div><span class="label">RAM</span> <span id="ramState">0x0000</span></div>
+      </div>
+    </header>
+
+    <section class="emulator__screen">
+      <div class="bezel">
+        <div class="screen-stack">
+          <canvas id="screen" width="256" height="240" aria-label="Emulator screen"></canvas>
+          <div class="screen-overlay scanlines" aria-hidden="true"></div>
+          <div class="screen-overlay glow" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="emulator__controls">
+      <div class="control-group">
+        <button id="powerBtn">Power</button>
+        <button id="resetBtn">Reset</button>
+        <button id="audioBtn">Audio: Off</button>
+      </div>
+      <div class="control-group">
+        <label for="romInput">Load Base64 ROM</label>
+        <textarea id="romInput" rows="3" placeholder="Paste base64-encoded ROM JSON"></textarea>
+        <div class="inline-actions">
+          <button id="loadRomBtn">Load ROM</button>
+          <button id="demoRomBtn">Insert Demo ROM</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <h2>Controls</h2>
+        <ul>
+          <li><strong>Arrow Keys</strong> — Navigate BIOS / Game Selector</li>
+          <li><strong>Enter</strong> — Confirm selection</li>
+          <li><strong>Esc</strong> — Return to Game Selector</li>
+          <li><strong>Space</strong> — Trigger APU square beep in-game</li>
+          <li><strong>NES Base64</strong> — iNES carts show sprite + header preview</li>
+        </ul>
+      </div>
+      <div class="control-group">
+        <h2>Sample Base64 ROM</h2>
+        <p class="helper">Use this base64 string to load the demo game from another device.</p>
+        <code id="demoRomCode" class="rom-code"></code>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
