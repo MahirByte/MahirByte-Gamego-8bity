@@ -22,7 +22,11 @@
 
     <section class="emulator__screen">
       <div class="bezel">
-        <canvas id="screen" width="256" height="240" aria-label="Emulator screen"></canvas>
+        <div class="screen-stack">
+          <canvas id="screen" width="256" height="240" aria-label="Emulator screen"></canvas>
+          <div class="screen-overlay scanlines" aria-hidden="true"></div>
+          <div class="screen-overlay glow" aria-hidden="true"></div>
+        </div>
       </div>
     </section>
 

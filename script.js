@@ -13,6 +13,8 @@ const demoRomCode = document.getElementById("demoRomCode");
 
 const CHAR_WIDTH = 8;
 const CHAR_HEIGHT = 16;
+const SCREEN_WIDTH = 256;
+const SCREEN_HEIGHT = 240;
 
 const FONT_5X7 = {
   "A": [
@@ -477,6 +479,16 @@ const ROM_LIBRARY = [
       message: "ARROWS TO SHIFT LANES",
     },
   },
+  {
+    name: "CUBE RUNNER",
+    description: "3D CUBE SPINNING DEMO.",
+    rom: {
+      background: "#05070a",
+      entities: [{ id: "player", x: 120, y: 110, w: 10, h: 10, color: "#5bc0eb", vx: 0, vy: 0 }],
+      message: "SPACE FOR CUBE BEEP",
+      showCube: true,
+    },
+  },
 ];
 
 const BIOS_STEPS = [
@@ -533,6 +545,7 @@ class Emulator {
     this.currentRom = null;
     this.roms = [...ROM_LIBRARY];
     this.lastFrame = performance.now();
+    this.cubeRotation = 0;
     this.input = {
       up: false,
       down: false,
@@ -605,6 +618,7 @@ class Emulator {
     if (this.state === "running" && this.currentRom) {
       this.cpu.cycles += 1;
       this.cpu.pc = (this.cpu.pc + 3) & 0xffff;
+      this.cubeRotation += delta * 0.0012;
       const romState = this.currentRom.rom;
       if (romState?.entities) {
         romState.entities.forEach((entity) => {
@@ -634,8 +648,7 @@ class Emulator {
 
   render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = COLOR_PALETTE.black;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawBackground();
 
     if (this.state === "off") {
       drawText("POWER OFF", 60, 112, COLOR_PALETTE.blue);
@@ -643,6 +656,7 @@ class Emulator {
     }
 
     if (this.state === "bios") {
+      drawCube({ x: 180, y: 130, size: 28, rotation: this.cubeRotation, color: COLOR_PALETTE.blue });
       drawText("GAMEGO-8BITY", 52, 36, COLOR_PALETTE.cyan);
       drawText("BIOS", 104, 56, COLOR_PALETTE.cyan);
       BIOS_STEPS.slice(0, this.bootIndex + 1).forEach((line, index) => {
@@ -652,6 +666,7 @@ class Emulator {
     }
 
     if (this.state === "selector") {
+      drawCube({ x: 188, y: 110, size: 24, rotation: this.cubeRotation, color: COLOR_PALETTE.magenta });
       drawText("GAME SELECTOR", 44, 28, COLOR_PALETTE.yellow);
       drawText("SELECT A GAME", 44, 48, COLOR_PALETTE.white);
       this.roms.forEach((rom, index) => {
@@ -673,6 +688,12 @@ class Emulator {
       ctx.fillStyle = this.currentRom.rom?.background || COLOR_PALETTE.black;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       const romState = this.currentRom.rom;
+      if (romState?.showCube) {
+        drawCube({ x: 128, y: 120, size: 40, rotation: this.cubeRotation, color: COLOR_PALETTE.cyan });
+      }
+      if (romState?.nesSprites) {
+        drawNESPreview(romState.nesSprites);
+      }
       if (romState?.entities) {
         romState.entities.forEach((entity) => {
           ctx.fillStyle = entity.color || COLOR_PALETTE.white;
@@ -715,6 +736,134 @@ function drawChar(char, x, y, color) {
   });
 }
 
+function drawBackground() {
+  const gradient = ctx.createLinearGradient(0, 0, 0, SCREEN_HEIGHT);
+  gradient.addColorStop(0, "#05070a");
+  gradient.addColorStop(0.55, "#0b0f16");
+  gradient.addColorStop(1, "#05060a");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  for (let i = 0; i < 20; i += 1) {
+    ctx.fillRect(0, i * 12, SCREEN_WIDTH, 1);
+  }
+}
+
+function project3D(point, rotation) {
+  const cosA = Math.cos(rotation);
+  const sinA = Math.sin(rotation);
+  const cosB = Math.cos(rotation * 0.7);
+  const sinB = Math.sin(rotation * 0.7);
+  let { x, y, z } = point;
+
+  const x1 = x * cosA - z * sinA;
+  const z1 = x * sinA + z * cosA;
+  const y1 = y * cosB - z1 * sinB;
+  const z2 = y * sinB + z1 * cosB;
+
+  const depth = 140;
+  const scale = depth / (depth + z2 + 80);
+  return {
+    x: x1 * scale,
+    y: y1 * scale,
+    scale,
+  };
+}
+
+function drawCube({ x, y, size, rotation, color }) {
+  const half = size / 2;
+  const points = [
+    { x: -half, y: -half, z: -half },
+    { x: half, y: -half, z: -half },
+    { x: half, y: half, z: -half },
+    { x: -half, y: half, z: -half },
+    { x: -half, y: -half, z: half },
+    { x: half, y: -half, z: half },
+    { x: half, y: half, z: half },
+    { x: -half, y: half, z: half },
+  ];
+  const projected = points.map((point) => project3D(point, rotation));
+  const edges = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+  ];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  edges.forEach(([start, end]) => {
+    const startPoint = projected[start];
+    const endPoint = projected[end];
+    ctx.moveTo(startPoint.x, startPoint.y);
+    ctx.lineTo(endPoint.x, endPoint.y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function decodeINES(bytes) {
+  if (bytes.length < 16) {
+    throw new Error("NES data too small.");
+  }
+  const header = String.fromCharCode(...bytes.slice(0, 4));
+  if (header !== "NES\u001a") {
+    throw new Error("Missing iNES header.");
+  }
+  const prgSize = bytes[4] * 16384;
+  const chrSize = bytes[5] * 8192;
+  const chrStart = 16 + prgSize;
+  const chrEnd = chrStart + chrSize;
+  if (chrEnd > bytes.length) {
+    throw new Error("Incomplete CHR ROM.");
+  }
+  const chrData = bytes.slice(chrStart, chrEnd);
+  const sprites = [];
+  for (let tile = 0; tile < Math.min(16, chrData.length / 16); tile += 1) {
+    const offset = tile * 16;
+    const sprite = [];
+    for (let row = 0; row < 8; row += 1) {
+      const plane1 = chrData[offset + row];
+      const plane2 = chrData[offset + row + 8];
+      const rowPixels = [];
+      for (let col = 7; col >= 0; col -= 1) {
+        const bit1 = (plane1 >> col) & 1;
+        const bit2 = (plane2 >> col) & 1;
+        rowPixels.push(bit1 + bit2 * 2);
+      }
+      sprite.push(rowPixels);
+    }
+    sprites.push(sprite);
+  }
+  return sprites;
+}
+
+function drawNESPreview(sprites) {
+  const palette = ["#05070a", "#5bc0eb", "#ffd166", "#b04cff"];
+  sprites.slice(0, 6).forEach((sprite, index) => {
+    const originX = 18 + (index % 3) * 30;
+    const originY = 70 + Math.floor(index / 3) * 30;
+    sprite.forEach((row, rowIndex) => {
+      row.forEach((pixel, colIndex) => {
+        if (pixel === 0) return;
+        ctx.fillStyle = palette[pixel] || COLOR_PALETTE.white;
+        ctx.fillRect(originX + colIndex * 2, originY + rowIndex * 2, 2, 2);
+      });
+    });
+  });
+  drawText("NES SPRITES", 18, 52, COLOR_PALETTE.green);
+}
+
 function updateDemoCode() {
   const demoRom = {
     name: "LUMA CHIP",
@@ -733,8 +882,24 @@ function updateDemoCode() {
 }
 
 function decodeRom(base64) {
-  const decoded = atob(base64.trim());
-  return JSON.parse(decoded);
+  const trimmed = base64.trim();
+  const decoded = atob(trimmed);
+  try {
+    return JSON.parse(decoded);
+  } catch (error) {
+    const bytes = Array.from(decoded, (char) => char.charCodeAt(0));
+    const sprites = decodeINES(bytes);
+    return {
+      name: "NES IMPORT",
+      description: "IMPORTED NES SPRITES",
+      rom: {
+        background: "#05070a",
+        message: "IMPORTED NES CART",
+        nesSprites: sprites,
+        showCube: true,
+      },
+    };
+  }
 }
 
 function safeLoadRom(base64) {
