@@ -514,6 +514,20 @@ class APU {
     return this.enabled;
   }
 
+  getContext() {
+    if (!this.enabled) {
+      return null;
+    }
+    if (!this.context) {
+      this.context = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return this.context;
+  }
+
+  isEnabled() {
+    return this.enabled;
+  }
+
   beep(freq = 440, duration = 0.15) {
     if (!this.enabled || !this.context) {
       return;
@@ -546,6 +560,7 @@ class Emulator {
     this.roms = [...ROM_LIBRARY];
     this.lastFrame = performance.now();
     this.cubeRotation = 0;
+    this.nesRunner = null;
     this.input = {
       up: false,
       down: false,
@@ -567,6 +582,10 @@ class Emulator {
       this.cpu.pc = 0x8000;
     } else {
       this.state = "off";
+      if (this.nesRunner) {
+        this.nesRunner.stop();
+        this.nesRunner = null;
+      }
     }
   }
 
@@ -575,6 +594,10 @@ class Emulator {
     this.cpu = { pc: 0x8000, cycles: 0, acc: 0, x: 0, y: 0, sp: 0xff };
     this.currentRom = null;
     this.selectorIndex = 0;
+    if (this.nesRunner) {
+      this.nesRunner.stop();
+      this.nesRunner = null;
+    }
   }
 
   addRom(rom) {
@@ -593,6 +616,27 @@ class Emulator {
       }));
     }
     this.cpuState = "RUN";
+    this.state = "running";
+  }
+
+  startNES(nesPayload) {
+    this.currentRom = {
+      name: nesPayload.name,
+      rom: {
+        background: "#05070a",
+        message: "RUNNING NES CART",
+        nesSprites: nesPayload.sprites,
+        nesMeta: nesPayload.meta,
+      },
+    };
+    this.nesRunner = new NESRunner({
+      audio: this.apu,
+      onFrame: (frame) => {
+        this.currentRom.rom.nesFrame = frame;
+      },
+    });
+    this.nesRunner.load(nesPayload.bytes);
+    this.cpuState = "NES";
     this.state = "running";
   }
 
@@ -615,11 +659,14 @@ class Emulator {
       }
     }
 
-  if (this.state === "running" && this.currentRom) {
+    if (this.state === "running" && this.currentRom) {
       this.cpu.cycles += 1;
       this.cpu.pc = (this.cpu.pc + 3) & 0xffff;
       this.cubeRotation += delta * 0.0012;
       const romState = this.currentRom.rom;
+      if (this.nesRunner) {
+        this.nesRunner.step();
+      }
       if (romState?.entities) {
         romState.entities.forEach((entity) => {
           if (entity.id === "player") {
@@ -688,6 +735,9 @@ class Emulator {
       ctx.fillStyle = this.currentRom.rom?.background || COLOR_PALETTE.black;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       const romState = this.currentRom.rom;
+      if (romState?.nesFrame) {
+        drawNESFrame(romState.nesFrame);
+      }
       if (romState?.showCube) {
         drawCube({ x: 128, y: 120, size: 40, rotation: this.cubeRotation, color: COLOR_PALETTE.cyan });
       }
@@ -818,6 +868,122 @@ function drawCube({ x, y, size, rotation, color }) {
   ctx.restore();
 }
 
+function drawNESFrame(frameBuffer) {
+  if (!frameBuffer) return;
+  const imageData = ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+  const buffer = new Uint32Array(imageData.data.buffer);
+  for (let i = 0; i < frameBuffer.length; i += 1) {
+    const color = frameBuffer[i] & 0xffffff;
+    buffer[i] = 0xff000000 | ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff);
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function bytesToBinaryString(bytes) {
+  let result = "";
+  const chunkSize = 16384;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.slice(i, i + chunkSize);
+    result += String.fromCharCode(...chunk);
+  }
+  return result;
+}
+
+class NESAudioPlayer {
+  constructor(apu) {
+    this.apu = apu;
+    this.queue = [];
+    this.node = null;
+    this.context = null;
+  }
+
+  start() {
+    if (!this.apu.isEnabled()) {
+      return;
+    }
+    this.context = this.apu.getContext();
+    if (!this.context || this.node) {
+      return;
+    }
+    const bufferSize = 1024;
+    this.node = this.context.createScriptProcessor(bufferSize, 0, 2);
+    this.node.onaudioprocess = (event) => {
+      const outputL = event.outputBuffer.getChannelData(0);
+      const outputR = event.outputBuffer.getChannelData(1);
+      for (let i = 0; i < outputL.length; i += 1) {
+        const sample = this.queue.length ? this.queue.shift() : [0, 0];
+        outputL[i] = sample[0];
+        outputR[i] = sample[1];
+      }
+    };
+    this.node.connect(this.context.destination);
+  }
+
+  push(left, right) {
+    if (!this.apu.isEnabled()) {
+      return;
+    }
+    if (!this.node) {
+      this.start();
+    }
+    this.queue.push([left, right]);
+    if (this.queue.length > 8192) {
+      this.queue.splice(0, this.queue.length - 4096);
+    }
+  }
+
+  stop() {
+    if (this.node) {
+      this.node.disconnect();
+      this.node = null;
+    }
+    this.queue = [];
+  }
+}
+
+class NESRunner {
+  constructor({ audio, onFrame }) {
+    this.audio = audio;
+    this.onFrame = onFrame;
+    this.nes = null;
+    this.audioPlayer = null;
+    this.running = false;
+  }
+
+  load(bytes) {
+    if (!window.JSNES) {
+      throw new Error("JSNES library missing.");
+    }
+    this.audioPlayer = new NESAudioPlayer(this.audio);
+    this.nes = new window.JSNES({
+      onFrame: (frameBuffer) => {
+        this.onFrame(frameBuffer);
+      },
+      onAudioSample: (left, right) => {
+        this.audioPlayer.push(left, right);
+      },
+    });
+    const romBinary = bytesToBinaryString(bytes);
+    this.nes.loadROM(romBinary);
+    this.running = true;
+  }
+
+  step() {
+    if (!this.running || !this.nes) {
+      return;
+    }
+    this.nes.frame();
+  }
+
+  stop() {
+    this.running = false;
+    if (this.audioPlayer) {
+      this.audioPlayer.stop();
+    }
+    this.nes = null;
+  }
+}
+
 function decodeINES(bytes) {
   if (bytes.length < 16) {
     throw new Error("NES data too small.");
@@ -920,27 +1086,28 @@ function decodeRom(base64) {
   const trimmed = base64.trim();
   const decoded = atob(trimmed);
   try {
-    return JSON.parse(decoded);
+    return { type: "json", data: JSON.parse(decoded) };
   } catch (error) {
     const bytes = Array.from(decoded, (char) => char.charCodeAt(0));
     const { sprites, meta } = decodeINES(bytes);
     return {
+      type: "ines",
+      bytes,
       name: "NES IMPORT",
-      description: "IMPORTED NES SPRITES",
-      rom: {
-        background: "#05070a",
-        message: "IMPORTED NES CART",
-        nesSprites: sprites,
-        nesMeta: meta,
-        showCube: true,
-      },
+      sprites,
+      meta,
     };
   }
 }
 
 function safeLoadRom(base64) {
   try {
-    const rom = decodeRom(base64);
+    const result = decodeRom(base64);
+    if (result.type === "ines") {
+      emulator.startNES(result);
+      return;
+    }
+    const rom = result.data;
     if (!rom?.name || !rom?.rom) {
       throw new Error("Missing name or rom payload.");
     }
